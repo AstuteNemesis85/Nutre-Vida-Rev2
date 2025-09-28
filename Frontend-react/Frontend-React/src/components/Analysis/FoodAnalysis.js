@@ -791,6 +791,29 @@ const FoodAnalysis = () => {
     }
   };
 
+  // Helper function to safely convert values to strings
+  const _validateAndStringify = (value, fallback = 'Not specified') => {
+    if (typeof value === 'string' && value.trim() !== '') {
+      return value.trim();
+    }
+    if (typeof value === 'object' && value !== null) {
+      // If it's an object, try to extract a meaningful string
+      if (value.name) return String(value.name);
+      if (value.title) return String(value.title);
+      if (value.description) return String(value.description);
+      // Otherwise stringify the object
+      try {
+        return JSON.stringify(value);
+      } catch (e) {
+        return fallback;
+      }
+    }
+    if (value !== null && value !== undefined) {
+      return String(value);
+    }
+    return fallback;
+  };
+
   const getHealthySwaps = async (analysisData) => {
     if (connectionStatus === 'offline') {
       showToast("Cannot get healthy swaps while offline", 'error');
@@ -812,13 +835,36 @@ const FoodAnalysis = () => {
 
       const data = await response.json();
       
+      // Validate the response structure
+      if (!data || !Array.isArray(data.swaps)) {
+        throw new Error('Invalid response format: missing swaps array');
+      }
+      
+      if (data.swaps.length === 0) {
+        throw new Error('No healthy swaps available for this meal');
+      }
+      
       showToast("Healthy swaps found!", 'success');
-      const formattedSwaps = data.swaps.map(swap => ({
-        original: swap.original || '',
-        alternative: swap.swap || '',
-        benefits: swap.reason || '',
-        indianBenefit: swap.indian_benefit || ''
-      }));
+      const formattedSwaps = data.swaps.map((swap, index) => {
+        // Ensure swap is an object
+        if (typeof swap !== 'object' || swap === null) {
+          console.error(`Invalid swap at index ${index}:`, swap);
+          return {
+            original: 'Unknown item',
+            alternative: 'Healthier option',
+            benefits: 'Better nutrition profile',
+            indianBenefit: 'Culturally appropriate'
+          };
+        }
+        
+        return {
+          original: _validateAndStringify(swap.original, 'Current food item'),
+          alternative: _validateAndStringify(swap.swap, 'Healthier alternative'),
+          benefits: _validateAndStringify(swap.reason, 'Better nutritional profile'),
+          indianBenefit: _validateAndStringify(swap.indian_benefit, 'Culturally appropriate choice')
+        };
+      });
+      
       setModalData(formattedSwaps);
       setModalType('swaps');
       setIsModalOpen(true);
