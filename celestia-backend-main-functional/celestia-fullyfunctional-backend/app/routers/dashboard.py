@@ -1,10 +1,11 @@
-from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
+from datetime import date
+from typing import Any, Dict, Optional
+
 from app.database import get_db
 from app.services.dashboard_service import DashboardService
-from typing import Dict, Any, Optional
-from datetime import date
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
@@ -216,3 +217,38 @@ def update_daily_summary(
     except Exception as e:
         print(f"Update daily summary error: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update daily summary: {str(e)}")
+
+@router.get("/nutrition-insights/{user_id}")
+def get_nutrition_insights(
+    user_id: int,
+    period: str = "7d",
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive nutrition insights with charts data and deficiencies"""
+    try:
+        dashboard_service = DashboardService(db)
+        
+        # Map period formats for compatibility
+        period_mapping = {
+            "7days": "7d",
+            "1month": "1m", 
+            "3months": "3m",
+            "7d": "7d",
+            "1m": "1m",
+            "3m": "3m"
+        }
+        mapped_period = period_mapping.get(period, "7d")
+        
+        insights_data = dashboard_service.get_nutrition_insights(user_id, mapped_period)
+        
+        if not insights_data:
+            raise HTTPException(status_code=404, detail="No nutrition data found for user")
+        
+        return {
+            "status": "success",
+            "data": insights_data
+        }
+        
+    except Exception as e:
+        print(f"Nutrition insights error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get nutrition insights: {str(e)}")

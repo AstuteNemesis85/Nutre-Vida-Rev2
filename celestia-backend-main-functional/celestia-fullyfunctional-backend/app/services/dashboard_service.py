@@ -1,9 +1,11 @@
-from datetime import datetime, date, timedelta
-from typing import Dict, Any, List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, extract
-from app.models.db_models import User, Meal, DailySummary
 import calendar
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from app.models.db_models import DailySummary, Meal, User
+from sqlalchemy import and_, extract, func
+from sqlalchemy.orm import Session
+
 
 class DashboardService:
     def __init__(self, db: Session):
@@ -397,3 +399,213 @@ class DashboardService:
         except Exception as e:
             print(f"Error getting meal history: {e}")
             return []
+    
+    def get_nutrition_insights(self, user_id: int, period: str = "7d") -> Dict[str, Any]:
+        """Get comprehensive nutrition insights for health dashboard"""
+        try:
+            # Determine date range based on period
+            end_date = date.today()
+            
+            if period == "7d":
+                start_date = end_date - timedelta(days=7)
+                period_name = "7 Days"
+            elif period == "1m":
+                start_date = end_date - timedelta(days=30)
+                period_name = "1 Month"
+            elif period == "3m":
+                start_date = end_date - timedelta(days=90)
+                period_name = "3 Months"
+            else:
+                start_date = end_date - timedelta(days=7)
+                period_name = "7 Days"
+            
+            # Get user goals
+            user = self.db.query(User).filter(User.id == user_id).first()
+            daily_goals = user.daily_goals if user and user.daily_goals else {
+                "calories": 2000,
+                "protein": 50,
+                "carbs": 250,
+                "fat": 65,
+                "fiber": 25
+            }
+            
+            # Get daily summaries for the period
+            summaries = self.db.query(DailySummary).filter(
+                and_(
+                    DailySummary.user_id == user_id,
+                    DailySummary.date >= start_date,
+                    DailySummary.date <= end_date
+                )
+            ).order_by(DailySummary.date).all()
+            
+            days_count = (end_date - start_date).days + 1
+            
+            print(f"Found {len(summaries)} daily summaries for user {user_id} in period {period}")
+            
+            if not summaries:
+                print(f"No summaries found, checking for meals directly...")
+                # Check if there are any meals at all for this user
+                meals = self.db.query(Meal).filter(
+                    and_(
+                        Meal.user_id == user_id,
+                        Meal.upload_date >= start_date,
+                        Meal.upload_date <= end_date
+                    )
+                ).all()
+                
+                print(f"Found {len(meals)} meals for user {user_id}")
+                
+                if meals:
+                    # Create daily summaries for existing meals
+                    for current_date in [start_date + timedelta(days=x) for x in range(days_count)]:
+                        self.create_or_update_daily_summary(user_id, current_date)
+                    
+                    # Re-fetch summaries after creation
+                    summaries = self.db.query(DailySummary).filter(
+                        and_(
+                            DailySummary.user_id == user_id,
+                            DailySummary.date >= start_date,
+                            DailySummary.date <= end_date
+                        )
+                    ).order_by(DailySummary.date).all()
+                    
+                    print(f"Created summaries, now have {len(summaries)} summaries")
+                
+                if not summaries:
+                    # Return empty data structure if no data available
+                    return {
+                        "period": period_name,
+                        "days_count": days_count,
+                        "days_tracked": 0,
+                        "stats": {
+                            "total_meals": 0,
+                            "avg_calories": 0,
+                            "calories_goal_achievement": 0,
+                            "protein_intake": 0
+                        },
+                        "macronutrients": {
+                            "protein": 33,
+                            "carbs": 34,
+                            "fat": 33
+                        },
+                        "daily_trend": [],
+                        "deficiencies": [],
+                        "message": "No meal data found. Start analyzing your meals to see insights!"
+                    }
+            
+            # Calculate totals and averages
+            total_calories = sum(s.total_calories for s in summaries)
+            total_protein = sum(s.total_protein for s in summaries)
+            total_carbs = sum(s.total_carbs for s in summaries)
+            total_fat = sum(s.total_fat for s in summaries)
+            total_fiber = sum(s.total_fiber for s in summaries)
+            total_meals = sum(s.meals_count for s in summaries)
+            
+            days_with_data = len(summaries)
+            avg_calories = total_calories / days_with_data if days_with_data > 0 else 0
+            avg_protein = total_protein / days_with_data if days_with_data > 0 else 0
+            avg_carbs = total_carbs / days_with_data if days_with_data > 0 else 0
+            avg_fat = total_fat / days_with_data if days_with_data > 0 else 0
+            avg_fiber = total_fiber / days_with_data if days_with_data > 0 else 0
+            
+            # Goal achievement calculations
+            days_calories_achieved = sum(1 for s in summaries if s.goal_calories_achieved)
+            calories_goal_achievement = (days_calories_achieved / days_with_data * 100) if days_with_data > 0 else 0
+            
+            # Macronutrient distribution (percentages)
+            total_macro_calories = (total_protein * 4) + (total_carbs * 4) + (total_fat * 9)
+            macro_percentages = {
+                "protein": round((total_protein * 4 / total_macro_calories * 100), 1) if total_macro_calories > 0 else 0,
+                "carbs": round((total_carbs * 4 / total_macro_calories * 100), 1) if total_macro_calories > 0 else 0,
+                "fat": round((total_fat * 9 / total_macro_calories * 100), 1) if total_macro_calories > 0 else 0
+            }
+            
+            # Daily trend data for charts
+            daily_trend = []
+            for i in range(days_count):
+                current_date = start_date + timedelta(days=i)
+                day_summary = next((s for s in summaries if s.date == current_date), None)
+                
+                daily_trend.append({
+                    "date": current_date.isoformat(),
+                    "calories": day_summary.total_calories if day_summary else 0,
+                    "protein": day_summary.total_protein if day_summary else 0,
+                    "carbs": day_summary.total_carbs if day_summary else 0,
+                    "fat": day_summary.total_fat if day_summary else 0
+                })
+            
+            # Deficiency analysis
+            deficiencies = []
+            
+            # Check protein deficiency
+            protein_goal = daily_goals.get("protein", 50)
+            if avg_protein < protein_goal * 0.8:  # Less than 80% of goal
+                deficiency_percentage = round(((protein_goal - avg_protein) / protein_goal * 100), 1)
+                deficiencies.append({
+                    "nutrient": "Protein",
+                    "severity": "high" if avg_protein < protein_goal * 0.6 else "moderate",
+                    "message": f"You're getting {deficiency_percentage}% less protein than recommended",
+                    "recommendation": "Consider adding lean meats, fish, eggs, or plant-based proteins to your meals"
+                })
+            
+            # Check fiber deficiency
+            fiber_goal = daily_goals.get("fiber", 25)
+            if avg_fiber < fiber_goal * 0.7:  # Less than 70% of goal
+                deficiency_percentage = round(((fiber_goal - avg_fiber) / fiber_goal * 100), 1)
+                deficiencies.append({
+                    "nutrient": "Fiber",
+                    "severity": "moderate",
+                    "message": f"Your fiber intake is {deficiency_percentage}% below recommended levels",
+                    "recommendation": "Add more fruits, vegetables, whole grains, and legumes to your diet"
+                })
+            
+            # Check calorie balance
+            calorie_goal = daily_goals.get("calories", 2000)
+            if avg_calories < calorie_goal * 0.8:
+                deficiencies.append({
+                    "nutrient": "Calories",
+                    "severity": "moderate",
+                    "message": "Your calorie intake may be too low for your goals",
+                    "recommendation": "Consider adding healthy, nutrient-dense snacks between meals"
+                })
+            elif avg_calories > calorie_goal * 1.2:
+                deficiencies.append({
+                    "nutrient": "Calories",
+                    "severity": "moderate", 
+                    "message": "Your calorie intake is above your daily goal",
+                    "recommendation": "Focus on portion control and nutrient-dense, lower-calorie foods"
+                })
+            
+            return {
+                "period": period_name,
+                "days_count": days_count,
+                "days_tracked": days_with_data,
+                "stats": {
+                    "total_meals": total_meals,
+                    "avg_calories": round(avg_calories, 1),
+                    "calories_goal_achievement": round(calories_goal_achievement, 1),
+                    "protein_intake": round(avg_protein, 1)
+                },
+                "macronutrients": macro_percentages,
+                "daily_trend": daily_trend,
+                "deficiencies": deficiencies,
+                "averages": {
+                    "calories": round(avg_calories, 1),
+                    "protein": round(avg_protein, 1),
+                    "carbs": round(avg_carbs, 1),
+                    "fat": round(avg_fat, 1),
+                    "fiber": round(avg_fiber, 1)
+                },
+                "goals": daily_goals
+            }
+            
+        except Exception as e:
+            print(f"Error getting nutrition insights: {e}")
+            return {
+                "error": "Failed to fetch nutrition insights",
+                "period": period,
+                "stats": {},
+                "macronutrients": {},
+                "daily_trend": [],
+                "deficiencies": []
+            }

@@ -171,21 +171,12 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
         if not result:
             return create_fallback_response("JSON parsing failed")
         
-        # Only suggest clarification for genuinely unclear cases
-        if isinstance(image_or_text, str):
-            text_lower = image_or_text.lower().strip()
-            # Check if the input is too vague and needs clarification
-            vague_indicators = ['some', 'little', 'lot', 'food', 'lunch', 'dinner', 'breakfast', 'snack']
-            is_vague = any(indicator in text_lower for indicator in vague_indicators) and len(text_lower.split()) < 4
-            
-            # If input seems specific enough, don't force clarification
-            specific_indicators = ['roti', 'rice', 'dal', 'curry', 'biryani', 'dosa', 'idli', 'paratha', 'plate', 'bowl', 'cup', 'piece', 'gram', 'kg']
-            is_specific = any(indicator in text_lower for indicator in specific_indicators)
-            
-            if is_specific and not is_vague:
-                result['need_clarification'] = False
-                result['unclear_items'] = []
+        # Debug logging to track clarification decisions
+        print(f"DEBUG: Analysis input: {image_or_text if isinstance(image_or_text, str) else 'Image'}")
+        print(f"DEBUG: AI result need_clarification: {result.get('need_clarification', False)}")
+        print(f"DEBUG: AI result unclear_items: {result.get('unclear_items', [])}")
         
+        # Trust the AI's decision about clarification - don't override it
         return result
         
     except Exception as e:

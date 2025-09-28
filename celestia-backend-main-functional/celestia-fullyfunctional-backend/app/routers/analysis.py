@@ -125,6 +125,7 @@ async def analyze(session_id: str, user_id: Optional[int] = Query(None), db: Ses
             questions = generate_clarifying_questions(analysis_data)
             sessions[session_id]["questions"] = questions
             sessions[session_id]["step"] = "clarify"
+            print(f"DEBUG IMAGE: Clarification needed! Questions: {questions}")
             return {
                 "message": "Analysis complete, clarification needed",
                 "questions": questions
@@ -243,6 +244,7 @@ def analyze_text(
             questions = generate_clarifying_questions(analysis_data)
             sessions[session_id]["questions"] = questions
             sessions[session_id]["step"] = "clarify"
+            print(f"DEBUG TEXT: Clarification needed! Questions: {questions}")
             return {
                 "message": "Analysis complete, clarification needed",
                 "questions": questions
