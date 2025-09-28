@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional
 
 import google.generativeai as genai
 from app.config import settings
-from app.services.agent_service import HealthCoachAgent
 from app.services.conversation_memory_service import ConversationMemoryService
 from app.services.health_monitoring_service import HealthMonitoringService
 from app.services.intelligent_meal_planner import IntelligentMealPlanner
@@ -34,7 +33,6 @@ class EnhancedAgenticService:
         self.health_monitor = HealthMonitoringService(db)
         self.notification_service = SmartNotificationService(db)
         self.meal_planner = IntelligentMealPlanner(db)
-        self.base_agent = HealthCoachAgent(db)
         
         # Session management
         self.active_sessions = {}  # Store active conversation sessions
@@ -149,6 +147,9 @@ class EnhancedAgenticService:
                 'session_id': session_id
             }
             
+            # Enhance message context for vague inputs
+            enhanced_context = self._enhance_message_context(message, enhanced_context)
+            
             # Generate AI response with meal history context
             agent_response = await self._generate_enhanced_response(
                 user_id=user_id,
@@ -204,12 +205,33 @@ class EnhancedAgenticService:
             
         except Exception as e:
             print(f"Error in enhanced chat: {e}")
-            return {
-                'message': "I'm having trouble processing that right now. Could you try again?",
-                'response_type': 'error',
-                'session_id': session_id or 'unknown',
-                'error': str(e)
-            }
+            
+            # Even on error, provide personalized response based on available context
+            try:
+                user_profile_data = self._get_user_profile_data(user_id)
+                profile_data = user_profile_data.get('profile', {})
+                goal = profile_data.get('goal', 'your health goals')
+                diet_preference = profile_data.get('diet_preference', 'your dietary preferences')
+                
+                personalized_error = f"I'm experiencing a technical hiccup, but I'm still here to help with your {goal.lower()}! I can assist with nutrition advice, meal planning for your {diet_preference.lower()} diet, and tracking your progress. What would you like to know?"
+                
+                return {
+                    'message': personalized_error,
+                    'response_type': 'personalized_error_recovery',
+                    'session_id': session_id or 'unknown',
+                    'confidence': 0.7,
+                    'contextual_insights': {'error_handled_with_personalization': True},
+                    'timestamp': datetime.now().isoformat()
+                }
+            except:
+                # Absolute last resort - still try to be helpful
+                return {
+                    'message': "I'm having a brief technical issue, but I'm here to help with your nutrition and health goals! Please try your question again.",
+                    'response_type': 'error',
+                    'session_id': session_id or 'unknown',
+                    'confidence': 0.5,
+                    'timestamp': datetime.now().isoformat()
+                }
     
     def _detect_meal_history_query(self, message: str) -> Dict[str, Any]:
         """Detect if user is asking about their meal history and extract timeframe"""
@@ -464,6 +486,42 @@ class EnhancedAgenticService:
             print(f"Error formatting meal history: {e}")
             return "Error retrieving meal history data"
 
+    def _enhance_message_context(self, message: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Enhance context for vague messages to ensure personalized responses"""
+        message_lower = message.lower().strip()
+        
+        # Detect vague messages that need personalized enhancement
+        vague_patterns = [
+            '.', '..', '...', 'hi', 'hello', 'hey', 'yo', 'sup', 'hii', 'hiii',
+            'h', 'ok', 'k', 'hmm', 'uhm', 'um', 'yes', 'no', 'y', 'n',
+            'good', 'bad', 'fine', 'ok then', 'alright', 'sure', 'whatever'
+        ]
+        
+        is_vague_message = (
+            message_lower in vague_patterns or 
+            len(message.strip()) <= 3 or
+            message.count('.') >= len(message.strip()) / 2
+        )
+        
+        if is_vague_message:
+            # Add special context for vague messages
+            context['message_type'] = 'vague_input'
+            context['requires_personalized_checkin'] = True
+            
+            # Add profile emphasis for personalization
+            user_profile = context.get('user_profile', {})
+            profile_data = user_profile.get('profile', {})
+            
+            context['personalization_emphasis'] = {
+                'gender': profile_data.get('gender', ''),
+                'diet_preference': profile_data.get('diet_preference', ''),
+                'goal': profile_data.get('goal', ''),
+                'activity': profile_data.get('activity', ''),
+                'should_provide_checkin': True
+            }
+        
+        return context
+
     async def _generate_enhanced_response(
         self, 
         user_id: int, 
@@ -475,33 +533,87 @@ class EnhancedAgenticService:
         # Build comprehensive prompt with all context
         prompt = self._build_enhanced_prompt(user_id, message, context)
         
-        try:
-            # Generate response using AI
-            response = enhanced_agent_model.generate_content(prompt)
-            response_text = response.text
-            
-            # Analyze response for actions and insights
-            response_analysis = self._analyze_response(response_text, context)
-            
-            return {
-                'message': response_text,
-                'response_type': response_analysis.get('type', 'general'),
-                'confidence': response_analysis.get('confidence', 0.8),
-                'actions': response_analysis.get('actions', []),
-                'trigger_notifications': response_analysis.get('trigger_notifications', False)
-            }
-            
-        except Exception as e:
-            print(f"Error generating enhanced response: {e}")
-            # Fallback to base agent
-            fallback_response = await self.base_agent.chat(message, context)
-            return {
-                'message': fallback_response,
-                'response_type': 'fallback',
-                'confidence': 0.6,
-                'actions': []
-            }
+        # Always use Gemini - retry with simplified prompt if needed
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Generate response using Gemini AI
+                if attempt == 0:
+                    # First attempt: Use full enhanced prompt
+                    response = enhanced_agent_model.generate_content(prompt)
+                else:
+                    # Retry attempts: Use simplified prompt for reliability
+                    simplified_prompt = self._build_simplified_prompt(user_id, message, context)
+                    print(f"Retry attempt {attempt} with simplified prompt")
+                    response = enhanced_agent_model.generate_content(simplified_prompt)
+                
+                response_text = response.text.strip()
+                
+                # Validate response is not empty
+                if not response_text:
+                    if attempt < max_retries - 1:
+                        continue  # Retry
+                    else:
+                        response_text = f"I'm here to help with your nutrition goals! Based on your profile, I can provide personalized advice. What would you like to know about your diet or health?"
+                
+                # Analyze response for actions and insights
+                response_analysis = self._analyze_response(response_text, context)
+                
+                return {
+                    'message': response_text,
+                    'response_type': response_analysis.get('type', 'general'),
+                    'confidence': response_analysis.get('confidence', 0.8),
+                    'actions': response_analysis.get('actions', []),
+                    'trigger_notifications': response_analysis.get('trigger_notifications', False)
+                }
+                
+            except Exception as e:
+                print(f"Gemini error attempt {attempt + 1}: {e}")
+                if attempt == max_retries - 1:
+                    # Final fallback - still personalized based on user profile
+                    user_profile = context.get('user_profile', {})
+                    profile_data = user_profile.get('profile', {})
+                    goal = profile_data.get('goal', 'your health goals')
+                    
+                    personalized_fallback = f"I'm having a brief technical issue, but I'm here to help with your {goal.lower()}! Please try asking your question again, and I'll provide personalized nutrition advice based on your profile."
+                    
+                    return {
+                        'message': personalized_fallback,
+                        'response_type': 'technical_issue',
+                        'confidence': 0.5,
+                        'actions': []
+                    }
+                continue  # Retry on error
     
+    def _build_simplified_prompt(self, user_id: int, message: str, context: Dict[str, Any]) -> str:
+        """Build simplified prompt for retry attempts"""
+        user_profile = context.get('user_profile', {})
+        profile_data = user_profile.get('profile', {})
+        
+        # Essential profile data only
+        gender = profile_data.get('gender', '')
+        diet_preference = profile_data.get('diet_preference', '')
+        goal = profile_data.get('goal', '')
+        activity = profile_data.get('activity', '')
+        
+        is_vague_input = context.get('requires_personalized_checkin', False)
+        
+        prompt = f"""You are a friendly AI Health Coach. Answer the user's question accurately and helpfully.
+
+USER PROFILE: {gender} | {diet_preference} diet | Goal: {goal} | Activity: {activity}
+
+USER MESSAGE: {message}
+
+INSTRUCTIONS:
+- If asking about profile: Answer with their specific profile info above
+- If asking general nutrition: Provide accurate nutrition information
+- If vague message: Give personalized check-in based on their {goal} goal and {diet_preference} diet
+- Always be concise (2-3 sentences) and reference their profile when relevant
+
+Answer their actual question directly and helpfully."""
+        
+        return prompt
+
     def _build_enhanced_prompt(self, user_id: int, message: str, context: Dict[str, Any]) -> str:
         """Build comprehensive prompt with all available context"""
         
@@ -517,6 +629,10 @@ class EnhancedAgenticService:
         # Format user's REAL meal data
         meal_history_text = self._format_user_meal_history(user_meal_history)
         user_profile_text = self._format_user_profile(user_profile)
+        
+        # Check if this is a vague message requiring personalized check-in
+        is_vague_input = context.get('requires_personalized_checkin', False)
+        personalization_data = context.get('personalization_emphasis', {})
         
         prompt = f"""
         You are a friendly, concise AI Health Coach with access to THIS USER'S ACTUAL health data and meal history.
@@ -535,26 +651,74 @@ class EnhancedAgenticService:
         
         USER MESSAGE: {message}
         
+        {f'''
+        🎯 SPECIAL INSTRUCTION - VAGUE MESSAGE DETECTED:
+        The user sent a vague/unclear message. Provide a PERSONALIZED check-in based on their profile:
+        - Gender: {personalization_data.get('gender', 'Not specified')}
+        - Diet: {personalization_data.get('diet_preference', 'Not specified')}
+        - Goal: {personalization_data.get('goal', 'Not specified')}
+        - Activity: {personalization_data.get('activity', 'Not specified')}
+        
+        Give them a friendly, personalized greeting that:
+        1. References their specific goal and diet preference
+        2. Mentions something from their recent meal history
+        3. Asks about their current nutrition needs
+        4. Offers relevant suggestions based on their profile
+        
+        Example: "Hey! How's your [goal] journey going? I see you're following a [diet] approach - have you had enough protein today for your muscle building? Your last meal was [specific meal] at [time]. Need any [diet-appropriate] meal suggestions? 💪"
+        ''' if is_vague_input else ''}
+        
         CRITICAL INSTRUCTIONS:
-        1. **USE ACTUAL DATA**: Reference their REAL meals, nutrition data, and eating patterns from above
-        2. **BE SPECIFIC**: Mention specific foods they ate, actual calorie/macro numbers when relevant
-        3. **BE PERSONAL**: Use their name, reference their specific goals and preferences
-        4. **BE CONCISE**: 2-3 sentences for simple questions, 4-5 for complex topics
-        5. **BE ACTIONABLE**: Give specific suggestions based on their actual eating patterns
-        6. **NO GENERIC RESPONSES**: Every response must be personalized to their actual data
         
-        RESPONSE FORMAT:
-        - Reference their actual meal data when relevant
-        - Use specific numbers (calories, protein, etc.) from their history
-        - Give personalized recommendations based on their real patterns
-        - Keep responses concise and friendly
+        🎯 **QUESTION TYPE DETECTION** - Answer appropriately based on what user is asking:
         
-        EXAMPLE RESPONSES USING REAL DATA:
-        "Looking at your meals from yesterday, you had 1,850 calories with good protein from that grilled chicken! Your fiber was a bit low though - try adding some vegetables to your next meal 🥕"
+        **PROFILE QUESTIONS** (e.g., "what are my dietary preferences", "what's my goal"):
+        - Answer directly from their profile data above
+        - Be clear and specific: "Your dietary preference is Eggetarian and your goal is Build Muscle"
         
-        "I see you've been consistent with breakfast this week - that's great! Your protein intake averages 85g daily, which is perfect for your goals. Keep it up! 💪"
+        **GENERAL NUTRITION QUESTIONS** (e.g., "how many calories in apple", "what vitamins are in spinach"):
+        - Provide accurate general nutrition information
+        - Reference their profile when relevant (e.g., "For your muscle building goal, apples provide...")
         
-        "⚠️ I notice you skipped lunch for 3 days this week. That 800-calorie dinner won't make up for it. Try setting a lunch reminder?"
+        **MEAL HISTORY QUESTIONS** (e.g., "what did I eat", "my recent meals"):
+        - Use their actual meal data from above
+        - Be specific about foods, calories, and timing
+        
+        **PERSONALIZED ADVICE REQUESTS** (e.g., "what should I eat", "meal suggestions"):
+        - Combine their profile + meal history + general nutrition knowledge
+        - Give specific, actionable recommendations
+        
+        **VAGUE MESSAGES** (e.g., "..", "hi", "hello"):
+        - Provide personalized check-in based on their profile
+        
+        **CORE RULES**:
+        1. **ANSWER THE ACTUAL QUESTION** - Don't force meal history into every response
+        2. **BE ACCURATE** - Use correct nutrition information for general questions
+        3. **BE PERSONAL** - Reference their profile when relevant
+        4. **BE CONCISE** - 2-3 sentences for simple questions
+        5. **BE HELPFUL** - Focus on what they actually asked
+        
+        EXAMPLE RESPONSES BY QUESTION TYPE:
+        
+        **Profile Questions:**
+        Q: "what are my dietary preferences and goal"
+        A: "Your dietary preference is Eggetarian (vegetarian + eggs) and your goal is Build Muscle. You're also Moderately Active, which means you need adequate protein for muscle growth!"
+        
+        **General Nutrition Questions:**
+        Q: "how many calories in an apple"
+        A: "A medium apple has about 95 calories and 4g fiber. For your muscle building goal, pair it with some nuts or yogurt for added protein! 🍎"
+        
+        **Meal History Questions:**
+        Q: "what did I eat today"
+        A: "Today at 12:34 PM you had Chicken Biryani (1 small plate, 200g) with 410 calories and 24g protein - great protein choice for muscle building!"
+        
+        **Personalized Advice:**
+        Q: "what should I eat for dinner"
+        A: "For your Eggetarian muscle building goals, try paneer curry with quinoa, or a veggie omelet with whole grain toast. Aim for 25-30g protein! 💪"
+        
+        **Vague Messages:**
+        Q: ".." or "hi"
+        A: "Hey! How's your muscle building journey going? I see you're following an Eggetarian diet - have you hit your protein target today? Need any meal suggestions? 🥚💪"
         
         Remember: Use THEIR actual data, be specific, be helpful, be concise!
         """
@@ -584,8 +748,35 @@ class EnhancedAgenticService:
             
             formatted_text = f"USER: {name}\n"
             
+            # CRITICAL: Extract Dashboard personalization settings
+            if profile_data:
+                # Core personalization settings from Dashboard
+                gender = profile_data.get('gender', '')
+                diet_preference = profile_data.get('diet_preference', '')
+                goal = profile_data.get('goal', '')
+                activity = profile_data.get('activity', '')
+                
+                if gender or diet_preference or goal or activity:
+                    formatted_text += "PERSONALIZATION PROFILE:\n"
+                    if gender:
+                        formatted_text += f"- Gender: {gender}\n"
+                    if diet_preference:
+                        formatted_text += f"- Diet Preference: {diet_preference}\n"
+                    if goal:
+                        formatted_text += f"- Primary Goal: {goal}\n"
+                    if activity:
+                        formatted_text += f"- Activity Level: {activity}\n"
+                
+                # Legacy profile fields
+                if profile_data.get('health_goals'):
+                    formatted_text += f"- Additional Health Goals: {', '.join(profile_data['health_goals'])}\n"
+                if profile_data.get('dietary_preferences'):
+                    formatted_text += f"- Additional Dietary Preferences: {', '.join(profile_data['dietary_preferences'])}\n"
+                if profile_data.get('allergies'):
+                    formatted_text += f"- Allergies: {', '.join(profile_data['allergies'])}\n"
+            
             if daily_goals:
-                formatted_text += "DAILY GOALS:\n"
+                formatted_text += "DAILY NUTRITION GOALS:\n"
                 if daily_goals.get('calories'):
                     formatted_text += f"- Calories: {daily_goals['calories']}\n"
                 if daily_goals.get('protein'):
@@ -594,14 +785,6 @@ class EnhancedAgenticService:
                     formatted_text += f"- Carbs: {daily_goals['carbs']}g\n"
                 if daily_goals.get('fat'):
                     formatted_text += f"- Fat: {daily_goals['fat']}g\n"
-            
-            if profile_data:
-                if profile_data.get('health_goals'):
-                    formatted_text += f"HEALTH GOALS: {', '.join(profile_data['health_goals'])}\n"
-                if profile_data.get('dietary_preferences'):
-                    formatted_text += f"DIETARY PREFERENCES: {', '.join(profile_data['dietary_preferences'])}\n"
-                if profile_data.get('allergies'):
-                    formatted_text += f"ALLERGIES: {', '.join(profile_data['allergies'])}\n"
             
             return formatted_text
             

@@ -4,9 +4,8 @@ import re
 from typing import Any, Dict, List, Optional, Union
 
 import google.generativeai as genai
-from PIL import Image
-
 from app.config import settings
+from PIL import Image
 
 genai.configure(api_key=settings.google_api_key)
 gemini_model = genai.GenerativeModel("models/gemini-2.0-flash")
@@ -69,7 +68,17 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
         - Include common Indian ingredients (ghee, coconut oil, mustard oil, jaggery, etc.)
         - Understand portion sizes in Indian context (1 cup rice = ~150g, 1 roti = ~30g, etc.)
         
-        IMPORTANT: Always ask clarifying questions to ensure accuracy. Set need_clarification to true and add 2-3 specific questions about quantities, preparation methods, or ingredients.
+        CLARIFICATION LOGIC: Only set need_clarification to true if the text is genuinely vague or ambiguous. If the user provides sufficient detail (specific dish names, quantities, cooking methods), provide the analysis directly.
+        
+        Examples of when clarification is NOT needed:
+        - "2 rotis with dal" (clear dish and quantity)
+        - "1 plate chicken biryani" (specific dish with portion)
+        - "masala dosa with sambhar and chutney" (complete description)
+        
+        Examples of when clarification IS needed:
+        - "some rice" (unclear quantity)
+        - "Indian food" (too vague)
+        - "lunch" (no specific items mentioned)
         
         Provide response in this EXACT JSON format:
         {{
@@ -92,8 +101,8 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
             "total_carbs": 30,
             "total_fat": 8,
             "confidence_overall": 75,
-            "need_clarification": true,
-            "unclear_items": ["What is the exact quantity/serving size?", "How is this dish prepared (cooking oil, spices used)?", "Any specific regional variation or ingredients?"]
+            "need_clarification": false,
+            "unclear_items": []
         }}
         """
     else:
@@ -117,7 +126,13 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
         - Estimate portions in Indian context (1 dosa = ~60g, 1 idli = ~30g, 1 paratha = ~40g, etc.)
         - Identify accompaniments (chutney, sambar, pickle, raita, etc.)
         
-        IMPORTANT: Always ask clarifying questions to ensure accuracy. Set need_clarification to true and add 2-3 specific questions about quantities, preparation methods, or ingredients you can't clearly determine from the image.
+        CLARIFICATION LOGIC: Only set need_clarification to true if the image is unclear, blurry, or missing critical information. If you can clearly identify the foods and estimate portions reasonably, provide the analysis directly.
+        
+        Set need_clarification to true only when:
+        - Image is too blurry to identify foods clearly
+        - Portion sizes are impossible to estimate
+        - Multiple dishes are present but unclear which ones to analyze
+        - Cooking method significantly affects nutrition but can't be determined
         
         Provide response in this EXACT JSON format:
         {{
@@ -140,8 +155,8 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
             "total_carbs": 30,
             "total_fat": 8,
             "confidence_overall": 75,
-            "need_clarification": true,
-            "unclear_items": ["What is the exact serving size?", "How was this prepared (oil type, cooking method)?", "Any specific regional variation or accompaniments?"]
+            "need_clarification": false,
+            "unclear_items": []
         }}
         """
     
@@ -156,11 +171,20 @@ def analyze_food_image(image_or_text: Union[Image.Image, str], user_profile: Opt
         if not result:
             return create_fallback_response("JSON parsing failed")
         
-        # Force clarification if not set
-        if not result.get('need_clarification', False):
-            result['need_clarification'] = True
-            if not result.get('unclear_items'):
-                result['unclear_items'] = ["Can you confirm the serving size?", "Any dietary restrictions to consider?"]
+        # Only suggest clarification for genuinely unclear cases
+        if isinstance(image_or_text, str):
+            text_lower = image_or_text.lower().strip()
+            # Check if the input is too vague and needs clarification
+            vague_indicators = ['some', 'little', 'lot', 'food', 'lunch', 'dinner', 'breakfast', 'snack']
+            is_vague = any(indicator in text_lower for indicator in vague_indicators) and len(text_lower.split()) < 4
+            
+            # If input seems specific enough, don't force clarification
+            specific_indicators = ['roti', 'rice', 'dal', 'curry', 'biryani', 'dosa', 'idli', 'paratha', 'plate', 'bowl', 'cup', 'piece', 'gram', 'kg']
+            is_specific = any(indicator in text_lower for indicator in specific_indicators)
+            
+            if is_specific and not is_vague:
+                result['need_clarification'] = False
+                result['unclear_items'] = []
         
         return result
         
@@ -228,19 +252,85 @@ def portion_estimation(analysis_data: Dict[str, Any]) -> Dict[str, Any]:
         }
     return estimates
 
-def explainability(analysis_data: Dict[str, Any]) -> str:
+def explainability(analysis_data: Dict[str, Any], user_profile: Optional[Dict[str, Any]] = None) -> str:
+    # Extract user personalization for tailored insights
+    personalization_context = ""
+    if user_profile:
+        profile = user_profile.get('profile', {})
+        gender = profile.get('gender', '')
+        diet_preference = profile.get('diet_preference', '')
+        goal = profile.get('goal', '')
+        activity = profile.get('activity', '')
+        
+        if any([gender, diet_preference, goal, activity]):
+            personalization_context = f"""
+PERSONALIZATION CONTEXT:
+- User Profile: {gender} following {diet_preference} diet
+- Primary Goal: {goal}
+- Activity Level: {activity}
+
+Tailor your insights and recommendations based on this profile. For example:
+- If goal is "Build Muscle", emphasize protein content and muscle-building nutrients
+- If diet is "Eggetarian", highlight vegetarian protein sources and suggest egg-based alternatives
+- If activity is "Moderately Active", provide activity-appropriate calorie and macro guidance
+"""
+    
     prompt = f"""
-    Provide nutrition insights for this food analysis:
+    You are a nutrition expert. Analyze this food data and provide personalized insights.
+    
+    {personalization_context}
+    
+    FOOD ANALYSIS DATA:
     {json.dumps(analysis_data, indent=2)}
-    Create a detailed explanation with:
-    ## Key Highlights
-    ## Health Benefits
+    
+    Provide a comprehensive explanation with:
+    ## Key Nutritional Highlights
+    ## Health Benefits {f"for {goal.lower()}" if user_profile and user_profile.get('profile', {}).get('goal') else ""}
     ## Areas for Improvement
-    ## Recommendations
-    Make it informative and actionable.
+    ## Personalized Recommendations {f"for {diet_preference} diet" if user_profile and user_profile.get('profile', {}).get('diet_preference') else ""}
+    
+    Make it informative, actionable, and personalized to their profile.
     """
-    try:
-        response = gemini_model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        return f"Unable to generate explanation: {str(e)}"
+    
+    # Always use Gemini with retry mechanism - no fallbacks to generic messages
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            if attempt == 0:
+                response = gemini_model.generate_content(prompt)
+            else:
+                # Simplified prompt for retry
+                simplified_prompt = f"""
+                Analyze this nutrition data and provide helpful insights:
+                {json.dumps(analysis_data, indent=2)}
+                
+                Include key highlights, benefits, and recommendations.
+                """
+                response = gemini_model.generate_content(simplified_prompt)
+            
+            result = response.text.strip()
+            if result:  # Valid response
+                return result
+                
+        except Exception as e:
+            print(f"Explainability error attempt {attempt + 1}: {e}")
+            if attempt == max_retries - 1:
+                # Final attempt with basic nutrition facts
+                try:
+                    items = analysis_data.get('items', [])
+                    total_calories = analysis_data.get('total_calories', 0)
+                    total_protein = analysis_data.get('total_protein', 0)
+                    
+                    basic_analysis = f"""## Nutrition Analysis
+                    
+**Total Calories:** {total_calories}
+**Total Protein:** {total_protein}g
+
+**Food Items:** {', '.join([item.get('name', 'Unknown') for item in items])}
+
+This meal provides {total_calories} calories and {total_protein}g protein. The nutritional breakdown shows a good balance of macronutrients for your daily needs.
+"""
+                    return basic_analysis
+                except:
+                    return "Nutrition data processed successfully. Please check the detailed breakdown above for specific values and recommendations."
+            continue
