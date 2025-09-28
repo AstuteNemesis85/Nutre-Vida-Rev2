@@ -1,24 +1,22 @@
-import React, { useState, useEffect } from 'react';
-import styled from 'styled-components';
 import { motion } from 'framer-motion';
-import renderSafe from '../../utils/renderSafe';
-import { 
-  User, 
-  Target, 
-  Activity, 
-  TrendingUp, 
+import {
+  Award,
+  BarChart3,
   Calendar,
   Camera,
-  History,
-  Save,
-  RefreshCw,
-  Zap,
   Heart,
-  Award,
-  BarChart3
+  History,
+  RefreshCw,
+  Save,
+  TrendingUp,
+  User,
+  Zap
 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import styled from 'styled-components';
 import { useApp } from '../../App';
+import renderSafe from '../../utils/renderSafe';
 
 const DashboardContainer = styled(motion.div)`
   min-height: 100vh;
@@ -317,7 +315,7 @@ const quickActions = [
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, connectionStatus, BASE_URL, showToast } = useApp();
+  const { user, connectionStatus, BASE_URL, showToast, updateUser } = useApp();
   const [profile, setProfile] = useState({
     gender: '',
     diet_preference: '',
@@ -384,6 +382,9 @@ const Dashboard = () => {
         throw new Error(`Profile update failed: ${response.status}`);
       }
 
+      const updatedUser = await response.json();
+      updateUser(updatedUser);
+      
       showToast("Profile saved successfully!", 'success');
     } catch (error) {
       console.error("Profile save error:", error);

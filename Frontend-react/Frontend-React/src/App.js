@@ -1,19 +1,19 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
+import { createContext, useContext, useEffect, useState } from 'react';
+import { Navigate, Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import styled from 'styled-components';
-import { motion, AnimatePresence } from 'framer-motion';
 
 // Components
-import Login from './components/Auth/Login';
-import Dashboard from './components/Dashboard/Dashboard';
+import AIHealthCoach from './components/AIHealthCoach/AIHealthCoach';
 import FoodAnalysis from './components/Analysis/FoodAnalysis';
+import Login from './components/Auth/Login';
+import ConnectionStatus from './components/Common/ConnectionStatus';
+import ErrorBoundary from './components/Common/ErrorBoundary';
+import Toast from './components/Common/Toast';
+import Dashboard from './components/Dashboard/Dashboard';
 import MealHistory from './components/History/MealHistory';
 import MealPlan from './components/MealPlan/MealPlan';
 import Navigation from './components/Navigation/Navigation';
-import AIHealthCoach from './components/AIHealthCoach/AIHealthCoach';
-import ConnectionStatus from './components/Common/ConnectionStatus';
-import Toast from './components/Common/Toast';
-import ErrorBoundary from './components/Common/ErrorBoundary';
 
 // Context
 const AppContext = createContext();
@@ -179,6 +179,10 @@ function App() {
     showToast("Logged out successfully", 'info');
   };
 
+  const updateUser = (updatedUserData) => {
+    setUser(updatedUserData);
+  };
+
   // Initialize app
   useEffect(() => {
     const initializeApp = async () => {
@@ -232,6 +236,7 @@ function App() {
     showToast,
     login,
     logout,
+    updateUser,
     initSession,
     BASE_URL,
     GOOGLE_CLIENT_ID
