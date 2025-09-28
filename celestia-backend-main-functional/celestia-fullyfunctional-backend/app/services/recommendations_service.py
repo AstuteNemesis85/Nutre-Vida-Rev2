@@ -21,15 +21,57 @@ def healthy_swaps(analysis_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     - Maintain authentic Indian flavors while improving nutrition
     - Consider vegetarian/vegan Indian alternatives
     
-    Format as JSON with 'swaps' array containing objects with 'original', 'swap', 'reason', 'indian_benefit' fields."""
+    CRITICAL: Return ONLY valid JSON with 'swaps' array. Each swap object must have exactly these string fields:
+    - 'original': name of current food item (string only)
+    - 'swap': name of healthier alternative (string only)  
+    - 'reason': brief health benefit explanation (string only)
+    - 'indian_benefit': cultural/traditional benefit (string only)
+    
+    Example format:
+    {{
+        "swaps": [
+            {{
+                "original": "White rice",
+                "swap": "Brown rice", 
+                "reason": "Higher fiber and nutrients",
+                "indian_benefit": "Traditional choice in South India"
+            }}
+        ]
+    }}"""
     
     try:
         response = gemini_model.generate_content(prompt)
         data = clean_json_response(response.text)
-        return data.get('swaps', []) if data else []
+        
+        if not data or 'swaps' not in data:
+            print(f"Invalid swaps response format: {data}")
+            return []
+        
+        # Validate and sanitize each swap
+        validated_swaps = []
+        for swap in data.get('swaps', []):
+            if isinstance(swap, dict):
+                validated_swap = {
+                    'original': str(swap.get('original', 'Unknown food')),
+                    'swap': str(swap.get('swap', 'Healthier alternative')),
+                    'reason': str(swap.get('reason', 'Better nutritional profile')),
+                    'indian_benefit': str(swap.get('indian_benefit', 'Culturally appropriate'))
+                }
+                validated_swaps.append(validated_swap)
+            else:
+                print(f"Invalid swap format: {swap}")
+        
+        return validated_swaps
+        
     except Exception as e:
         print(f"Healthy swaps error: {e}")
-        return []
+        # Return a fallback swap suggestion
+        return [{
+            'original': 'Current choice',
+            'swap': 'Healthier alternative', 
+            'reason': 'Better nutrition profile',
+            'indian_benefit': 'Follows traditional Indian nutrition principles'
+        }]
 
 def personalized_recommendations(analysis_data: Dict[str, Any], user_profile: Dict[str, Any]) -> Dict[str, Any]:
     prompt = f"""You are a nutrition expert specializing in Indian cuisine and lifestyle. Provide personalized recommendations for {json.dumps(analysis_data)} 
