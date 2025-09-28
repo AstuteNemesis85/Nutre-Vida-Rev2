@@ -1,22 +1,17 @@
 import { motion } from 'framer-motion';
 import {
-  Award,
-  BarChart3,
   Calendar,
   Camera,
-  Heart,
   History,
   RefreshCw,
   Save,
-  TrendingUp,
-  User,
-  Zap
+  User
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import { useApp } from '../../App';
-import renderSafe from '../../utils/renderSafe';
+import HealthInsights from './HealthInsights';
 
 const DashboardContainer = styled(motion.div)`
   min-height: 100vh;
@@ -206,88 +201,7 @@ const SaveButton = styled(motion.button)`
   }
 `;
 
-const InsightsSection = styled(motion.div)`
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 20px;
-  padding: 40px;
-`;
 
-const InsightsGrid = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-`;
-
-const InsightCard = styled(motion.div)`
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  padding: 24px;
-  position: relative;
-  overflow: hidden;
-  
-  &::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: ${props => props.gradient};
-  }
-`;
-
-const InsightHeader = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-`;
-
-const InsightIcon = styled.div`
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: ${props => props.gradient};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: white;
-`;
-
-const InsightTitle = styled.h3`
-  color: white;
-  font-weight: 600;
-  font-size: 1.1rem;
-`;
-
-const InsightContent = styled.div`
-  color: rgba(255, 255, 255, 0.8);
-  line-height: 1.6;
-`;
-
-const RefreshButton = styled(motion.button)`
-  background: rgba(102, 126, 234, 0.2);
-  border: 1px solid rgba(102, 126, 234, 0.3);
-  border-radius: 10px;
-  padding: 10px 16px;
-  color: #90cdf4;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.9rem;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  margin-top: 20px;
-  
-  &:hover {
-    background: rgba(102, 126, 234, 0.3);
-    transform: translateY(-1px);
-  }
-`;
 
 const quickActions = [
   {
@@ -322,46 +236,14 @@ const Dashboard = () => {
     goal: '',
     activity: ''
   });
-  const [insights, setInsights] = useState(null);
+
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (user?.profile) {
       setProfile(user.profile);
     }
-    loadUserInsights();
   }, [user]);
-
-  const loadUserInsights = async () => {
-    if (connectionStatus === 'offline' || !user) return;
-
-    try {
-      // Try to get comprehensive dashboard data from agentic AI
-      const agenticResponse = await fetch(`${BASE_URL}/agentic/dashboard/${user.id}`);
-      if (agenticResponse.ok) {
-        const agenticData = await agenticResponse.json();
-        setInsights(agenticData);
-        return;
-      }
-
-      // Fallback to daily dashboard
-      const dashboardResponse = await fetch(`${BASE_URL}/dashboard/daily/${user.id}`);
-      if (dashboardResponse.ok) {
-        const dashboardData = await dashboardResponse.json();
-        setInsights(dashboardData.data);
-        return;
-      }
-
-      // Fallback to basic agent insights
-      const response = await fetch(`${BASE_URL}/agent/insights/${user.id}`);
-      if (response.ok) {
-        const data = await response.json();
-        setInsights(data);
-      }
-    } catch (error) {
-      console.error("Failed to load insights:", error);
-    }
-  };
 
   const saveProfile = async () => {
     if (!user || connectionStatus === 'offline') {
@@ -515,114 +397,7 @@ const Dashboard = () => {
         </SaveButton>
       </PersonalizationSection>
 
-      <InsightsSection
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, delay: 0.8 }}
-      >
-        <SectionTitle>
-          <BarChart3 size={24} />
-          Your Health Insights
-          <RefreshButton
-            onClick={loadUserInsights}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-          >
-            <RefreshCw size={16} />
-            Refresh
-          </RefreshButton>
-        </SectionTitle>
-
-        <InsightsGrid>
-          {insights?.weekly_stats && Object.keys(insights.weekly_stats).length > 0 ? (
-            <InsightCard
-              gradient="linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              <InsightHeader>
-                <InsightIcon gradient="linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
-                  <TrendingUp size={20} />
-                </InsightIcon>
-                <InsightTitle>Weekly Statistics</InsightTitle>
-              </InsightHeader>
-              <InsightContent>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
-                  <div><strong>Avg Calories:</strong> {insights.weekly_stats.avg_daily_calories || 'N/A'}</div>
-                  <div><strong>Avg Protein:</strong> {insights.weekly_stats.avg_daily_protein || 'N/A'}g</div>
-                  <div><strong>Avg Carbs:</strong> {insights.weekly_stats.avg_daily_carbs || 'N/A'}g</div>
-                  <div><strong>Avg Fat:</strong> {insights.weekly_stats.avg_daily_fat || 'N/A'}g</div>
-                  <div><strong>Meals Tracked:</strong> {insights.weekly_stats.meals_tracked || 0}</div>
-                </div>
-              </InsightContent>
-            </InsightCard>
-          ) : null}
-
-          {insights?.motivational_message && (
-            <InsightCard
-              gradient="linear-gradient(135deg, #48bb78 0%, #38a169 100%)"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5, delay: 0.1 }}
-            >
-              <InsightHeader>
-                <InsightIcon gradient="linear-gradient(135deg, #48bb78 0%, #38a169 100%)">
-                  <Heart size={20} />
-                </InsightIcon>
-                <InsightTitle>Motivation</InsightTitle>
-              </InsightHeader>
-              <InsightContent>
-                {renderSafe(insights.motivational_message)}
-              </InsightContent>
-            </InsightCard>
-          )}
-
-          {insights?.recommendations && insights.recommendations.length > 0 && (
-            <InsightCard
-              gradient="linear-gradient(135deg, #ed8936 0%, #dd6b20 100%)"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5, delay: 0.2 }}
-            >
-              <InsightHeader>
-                <InsightIcon gradient="linear-gradient(135deg, #ed8936 0%, #dd6b20 100%)">
-                  <Award size={20} />
-                </InsightIcon>
-                <InsightTitle>Recommendations</InsightTitle>
-              </InsightHeader>
-              <InsightContent>
-                <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                  {insights.recommendations.slice(0, 3).map((rec, index) => (
-                    <li key={index} style={{ marginBottom: '8px' }}>
-                      {renderSafe(rec)}
-                    </li>
-                  ))}
-                </ul>
-              </InsightContent>
-            </InsightCard>
-          )}
-
-          {(!insights || Object.keys(insights).length === 0) && (
-            <InsightCard
-              gradient="linear-gradient(135deg, #667eea 0%, #764ba2 100%)"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              <InsightHeader>
-                <InsightIcon gradient="linear-gradient(135deg, #667eea 0%, #764ba2 100%)">
-                  <Zap size={20} />
-                </InsightIcon>
-                <InsightTitle>Get Started</InsightTitle>
-              </InsightHeader>
-              <InsightContent>
-                Start analyzing your meals to see personalized insights and recommendations here!
-              </InsightContent>
-            </InsightCard>
-          )}
-        </InsightsGrid>
-      </InsightsSection>
+      <HealthInsights userId={user?.id} />
     </DashboardContainer>
   );
 };
